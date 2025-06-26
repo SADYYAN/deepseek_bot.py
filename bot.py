@@ -4,15 +4,15 @@ import logging
 import asyncio
 import aiosqlite
 from datetime import datetime, timedelta
-from aiogram import Bot, Dispatcher, executor, types
+from aiogram import Bot, Dispatcher
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.middlewares.logging import LoggingMiddleware  # Update for Aiogram 3.x
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 
-TOKEN = '8018436146:AAFh3Mqy4SbIIFm3tYDoGnHUcZCEBxBSI2Y'
-ADMIN = [7939446555]
+TOKEN = '7928329417:AAG2dO_6DjHelwjkfYmy_Pf7-57abMIUVtM'
+ADMIN = [8165866779]
 DB = 'backup.db'
 
 bot = Bot(token=TOKEN)
@@ -70,35 +70,35 @@ def get_manage_kb(typ, path):
     kb.add(InlineKeyboardButton("🔙 Назад", callback_data="list_paths"))
     return kb
 
-@dp.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
+@dp.message(commands=['start'])
+async def cmd_start(message):
     if message.from_user.id not in ADMIN:
-        return await message.reply("⛔️ У вас нет доступа.")
+        return await message.answer("⛔️ У вас нет доступа.")
     await message.answer("🔧 Главное меню:", reply_markup=get_main_kb())
 
-@dp.callback_query_handler(lambda c: c.data == "status")
-async def status(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data == "status")
+async def status(callback_query):
     if backup_task_status['running']:
         msg = "✅ Служба работает. Ожидаем времени бэкапа."
     else:
         msg = f"❌ Ошибка: {backup_task_status['error']}"
     await bot.send_message(callback_query.from_user.id, msg)
 
-@dp.callback_query_handler(lambda c: c.data == "add_folder" or c.data == "add_file")
-async def add_path_prompt(callback_query: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(lambda c: c.data == "add_folder" or c.data == "add_file")
+async def add_path_prompt(callback_query, state: FSMContext):
     await Form.waiting_for_path.set()
     await state.update_data(type='folder' if callback_query.data == 'add_folder' else 'file')
     await callback_query.message.edit_text("📥 Введите абсолютный путь:", reply_markup=InlineKeyboardMarkup().add(
         InlineKeyboardButton("❌ Отмена", callback_data="cancel")
     ))
 
-@dp.callback_query_handler(lambda c: c.data == "cancel", state='*')
-async def cancel_action(callback_query: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(lambda c: c.data == "cancel", state='*')
+async def cancel_action(callback_query, state: FSMContext):
     await state.finish()
     await callback_query.message.edit_text("❌ Отменено.", reply_markup=get_main_kb())
 
-@dp.callback_query_handler(lambda c: c.data == "list_paths")
-async def show_paths(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data == "list_paths")
+async def show_paths(callback_query):
     async with aiosqlite.connect(DB) as db:
         async with db.execute("SELECT path, type, interval FROM paths") as cursor:
             rows = await cursor.fetchall()
@@ -111,8 +111,8 @@ async def show_paths(callback_query: types.CallbackQuery):
     kb.add(InlineKeyboardButton("🔙 Назад", callback_data="main_menu"))
     await callback_query.message.edit_text("🗂 Список путей:", reply_markup=kb)
 
-@dp.message_handler(state=Form.waiting_for_path)
-async def process_path(message: types.Message, state: FSMContext):
+@dp.message(state=Form.waiting_for_path)
+async def process_path(message, state: FSMContext):
     user_data = await state.get_data()
     path = message.text.strip()
     if not os.path.exists(path):
@@ -124,16 +124,16 @@ async def process_path(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("✅ Добавлено. Выберите частоту:", reply_markup=get_interval_kb(user_data['type'], path))
 
-@dp.callback_query_handler(lambda c: c.data.startswith("set_interval|"))
-async def set_interval(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data.startswith("set_interval|"))
+async def set_interval(callback_query):
     _, typ, path, interval = callback_query.data.split('|', 3)
     async with aiosqlite.connect(DB) as db:
         await db.execute("UPDATE paths SET interval = ? WHERE path = ? AND type = ?", (interval, path, typ))
         await db.commit()
     await callback_query.message.edit_text("🔄 Сделать бэкап прямо сейчас?", reply_markup=get_confirmation_kb(typ, path))
 
-@dp.callback_query_handler(lambda c: c.data.startswith("confirm_backup|"))
-async def confirm_backup(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data.startswith("confirm_backup|"))
+async def confirm_backup(callback_query):
     _, typ, path = callback_query.data.split('|', 2)
     try:
         if typ == 'folder':
@@ -152,25 +152,25 @@ async def confirm_backup(callback_query: types.CallbackQuery):
         return
     await callback_query.message.edit_text("✅ Бэкап выполнен. Работа продолжается в фоне.", reply_markup=get_main_kb())
 
-@dp.callback_query_handler(lambda c: c.data == "main_menu")
-async def go_main(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data == "main_menu")
+async def go_main(callback_query):
     await callback_query.message.edit_text("🔧 Главное меню:", reply_markup=get_main_kb())
 
-@dp.callback_query_handler(lambda c: c.data.startswith("manage|"))
-async def manage_path(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data.startswith("manage|"))
+async def manage_path(callback_query):
     _, typ, path = callback_query.data.split('|', 2)
     await callback_query.message.edit_text(f"🔧 Управление путем:{path}", reply_markup=get_manage_kb(typ, path))
 
-@dp.callback_query_handler(lambda c: c.data.startswith("delete|"))
-async def delete_path(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data.startswith("delete|"))
+async def delete_path(callback_query):
     _, typ, path = callback_query.data.split('|', 2)
     async with aiosqlite.connect(DB) as db:
         await db.execute("DELETE FROM paths WHERE path = ? AND type = ?", (path, typ))
         await db.commit()
     await callback_query.message.edit_text("✅ Путь удалён.", reply_markup=get_main_kb())
 
-@dp.callback_query_handler(lambda c: c.data.startswith("edit_interval|"))
-async def edit_interval(callback_query: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data.startswith("edit_interval|"))
+async def edit_interval(callback_query):
     _, typ, path = callback_query.data.split('|', 2)
     await callback_query.message.edit_text("⏱ Выберите новый интервал:", reply_markup=get_interval_kb(typ, path))
 
@@ -219,4 +219,4 @@ if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
     loop.create_task(backup_scheduler())
-    executor.start_polling(dp, skip_updates=True)
+    dp.start_polling()
